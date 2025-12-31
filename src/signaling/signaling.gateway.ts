@@ -5,21 +5,39 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
-import mediasoup from 'mediasoup';
+import * as mediasoup from 'mediasoup';
+
+// this means the capabilities of a conference rooms RTP codec capability
+// during room creation(means router creation) we have to give this mediaCodecs for that specific room
+const mediaCodecs: Omit<
+  mediasoup.types.RtpCodecCapability,
+  'preferredPayloadType'
+>[] = [
+  {
+    kind: 'audio',
+    mimeType: 'audio/opus',
+    clockRate: 48000,
+    channels: 2,
+  },
+  {
+    kind: 'video',
+    mimeType: 'video/VP8',
+    clockRate: 90000,
+  },
+];
+
+type TRoomsPeers = {
+  socket: Socket;
+  transports: Map<string, mediasoup.types.Transport>;
+  consumers: Map<string, mediasoup.types.Consumer>;
+  producers: Map<string, mediasoup.types.Producer>;
+};
 
 type TRooms = Map<
   string,
   {
     router: mediasoup.types.Router;
-    peers: Map<
-      [socketId: string],
-      {
-        socket: Socket;
-        transports: Map<string, mediasoup.types.Transport>;
-        consumers: Map<string, mediasoup.types.Consumer>;
-        producers: Map<string, mediasoup.types.Producer>;
-      }
-    >;
+    peers: Map<string, TRoomsPeers>;
   }
 >;
 
@@ -64,7 +82,7 @@ export class SignalingGateway {
   }
 
   @SubscribeMessage('join-room')
-  handleJoinRoom(
+  async handleJoinRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() room: string,
   ) {
@@ -76,27 +94,45 @@ export class SignalingGateway {
       ' connected to room through socket',
     );
 
-    let theRoom = this.rooms.get('MAIN');
+   
 
-    if (!theRoom) {
-      // const router = await;
+    if (!this.rooms.get(room)) {
+      const router = await this.worker.createRouter({ mediaCodecs });
+      this.rooms.set(room, {
+        router,
+        peers: new Map(),
+      });
     }
 
+    
+
+    const roomObj = this.rooms.get(room);
+    const peer: TRoomsPeers = {
+      socket: client,
+      transports: new Map(),
+      producers: new Map(),
+      consumers: new Map(),
+    };
+
+    
+
+    roomObj?.peers.set(client.id, peer);
+
+    // console.log({theRoom: this.rooms.get(room)})
+
     client.join(room);
+    return true
   }
 
-  @SubscribeMessage('message')
-  handleMessage(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { message: string },
-  ): string {
-    console.log(
-      'handleMessage ============== client : ',
-      client.id,
-      ' sent message : ',
-      data,
-    );
-    return 'Hello world!';
+  @SubscribeMessage('get-rtp-capabilities')
+  handleGetRTPCapabilities(@ConnectedSocket() client:Socket, @MessageBody() data: {room:string}) {
+    const {room}= data ?? {}
+    const theRoom = this.rooms.get(room)
+    if(!theRoom){
+      throw new Error("Room: " + room + " Doesnot exist")
+    }
+
+    return theRoom.router.rtpCapabilities
   }
 
   @SubscribeMessage('new-user')
