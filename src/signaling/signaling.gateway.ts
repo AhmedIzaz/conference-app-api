@@ -5,6 +5,23 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
+import mediasoup from 'mediasoup';
+
+type TRooms = Map<
+  string,
+  {
+    router: mediasoup.types.Router;
+    peers: Map<
+      [socketId: string],
+      {
+        socket: Socket;
+        transports: Map<string, mediasoup.types.Transport>;
+        consumers: Map<string, mediasoup.types.Consumer>;
+        producers: Map<string, mediasoup.types.Producer>;
+      }
+    >;
+  }
+>;
 
 @WebSocketGateway({
   cors: {
@@ -12,6 +29,24 @@ import { Socket } from 'socket.io';
   },
 })
 export class SignalingGateway {
+  worker: mediasoup.types.Worker;
+  rooms: TRooms;
+  constructor() {
+    this.rooms = new Map();
+  }
+
+  async onModuleInit() {
+    this.worker = await mediasoup.createWorker({
+      rtcMinPort: 40000,
+      rtcMaxPort: 49999,
+    });
+
+    console.log(
+      'Worker for media soup created during on module init: ',
+      this.worker,
+    );
+  }
+
   handleConnection(@ConnectedSocket() client: Socket) {
     console.log(
       'handleConnection ================ Client: ',
@@ -40,6 +75,13 @@ export class SignalingGateway {
       room,
       ' connected to room through socket',
     );
+
+    let theRoom = this.rooms.get('MAIN');
+
+    if (!theRoom) {
+      // const router = await;
+    }
+
     client.join(room);
   }
 
