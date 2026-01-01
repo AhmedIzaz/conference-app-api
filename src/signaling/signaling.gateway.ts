@@ -94,8 +94,6 @@ export class SignalingGateway {
       ' connected to room through socket',
     );
 
-   
-
     if (!this.rooms.get(room)) {
       const router = await this.worker.createRouter({ mediaCodecs });
       this.rooms.set(room, {
@@ -103,8 +101,6 @@ export class SignalingGateway {
         peers: new Map(),
       });
     }
-
-    
 
     const roomObj = this.rooms.get(room);
     const peer: TRoomsPeers = {
@@ -114,25 +110,90 @@ export class SignalingGateway {
       consumers: new Map(),
     };
 
-    
-
     roomObj?.peers.set(client.id, peer);
 
     // console.log({theRoom: this.rooms.get(room)})
 
     client.join(room);
-    return true
+    return true;
   }
 
   @SubscribeMessage('get-rtp-capabilities')
-  handleGetRTPCapabilities(@ConnectedSocket() client:Socket, @MessageBody() data: {room:string}) {
-    const {room}= data ?? {}
-    const theRoom = this.rooms.get(room)
-    if(!theRoom){
-      throw new Error("Room: " + room + " Doesnot exist")
+  handleGetRTPCapabilities(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { room: string },
+  ) {
+    const { room } = data ?? {};
+    const theRoom = this.rooms.get(room);
+    if (!theRoom) {
+      throw new Error('Room: ' + room + ' Doesnot exist');
     }
 
-    return theRoom.router.rtpCapabilities
+    return theRoom.router.rtpCapabilities;
+  }
+
+  @SubscribeMessage('create-transport')
+  async handleCreateTransport(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { room: string; direction: 'SEND' | 'RECV' },
+  ) {
+    const { room, direction } = data ?? {};
+
+    const theRoom = this.rooms.get(room);
+    if (theRoom) {
+      if (direction === 'SEND') {
+        const transport = await theRoom.router.createWebRtcTransport({
+          listenIps: [{ announcedIp: '127.0.0.1', ip: '0.0.0.0' }],
+          enableSctp: true,
+          enableTcp: true,
+          enableUdp: true,
+        });
+
+        const peer = theRoom.peers.get(client.id);
+        peer?.transports.set(transport.id, transport);
+
+        return {
+          id: transport.id,
+          iceParameters: transport.iceParameters,
+          iceCandidates: transport.iceCandidates,
+          dtlsParameters: transport.dtlsParameters,
+        };
+      } else {
+      }
+    }
+  }
+
+  @SubscribeMessage('connect-sendTransport')
+  async handleConnectSendTransport(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      room: string;
+      transportId: string;
+      dtlsParameters: mediasoup.types.DtlsParameters;
+    },
+  ) {
+
+    const { room, transportId, dtlsParameters } = data ?? {};
+
+     console.log(
+      'handleConnectSendTransport ================ Client: ',
+      client.id,
+      ' room: ',
+      room
+    );
+    const theRoom = this.rooms.get(room);
+    if (theRoom) {
+      const peer = theRoom.peers.get(client.id);
+      if (peer) {
+        const transport = peer.transports.get(transportId);
+        if (transport) {
+          await transport.connect({ dtlsParameters });
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   @SubscribeMessage('new-user')
