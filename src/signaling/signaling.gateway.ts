@@ -112,8 +112,6 @@ export class SignalingGateway {
 
     roomObj?.peers.set(client.id, peer);
 
-    // console.log({theRoom: this.rooms.get(room)})
-
     client.join(room);
     return true;
   }
@@ -141,26 +139,23 @@ export class SignalingGateway {
 
     const theRoom = this.rooms.get(room);
     if (theRoom) {
-      if (direction === 'SEND') {
-        const transport = await theRoom.router.createWebRtcTransport({
-          listenIps: [{ announcedIp: '127.0.0.1', ip: '0.0.0.0' }],
-          enableSctp: true,
-          enableTcp: true,
-          enableUdp: true,
-          appData: { direction },
-        });
+      const transport = await theRoom.router.createWebRtcTransport({
+        listenIps: [{ announcedIp: '127.0.0.1', ip: '0.0.0.0' }],
+        enableSctp: true,
+        enableTcp: true,
+        enableUdp: true,
+        appData: { direction },
+      });
 
-        const peer = theRoom.peers.get(client.id);
-        peer?.transports.set(transport.id, transport);
+      const peer = theRoom.peers.get(client.id);
+      peer?.transports.set(transport.id, transport);
 
-        return {
-          id: transport.id,
-          iceParameters: transport.iceParameters,
-          iceCandidates: transport.iceCandidates,
-          dtlsParameters: transport.dtlsParameters,
-        };
-      } else {
-      }
+      return {
+        id: transport.id,
+        iceParameters: transport.iceParameters,
+        iceCandidates: transport.iceCandidates,
+        dtlsParameters: transport.dtlsParameters,
+      };
     }
   }
 
@@ -274,6 +269,9 @@ export class SignalingGateway {
       rtpCapabilities: mediasoup.types.RtpCapabilities;
     },
   ) {
+
+    console.log("handleConsume ==============", data)
+
     const { room, producerId, rtpCapabilities } = data ?? {};
 
     const theRoom = this.rooms.get(room);
