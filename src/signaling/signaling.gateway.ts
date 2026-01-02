@@ -147,6 +147,7 @@ export class SignalingGateway {
           enableSctp: true,
           enableTcp: true,
           enableUdp: true,
+          appData: { direction },
         });
 
         const peer = theRoom.peers.get(client.id);
@@ -173,14 +174,13 @@ export class SignalingGateway {
       dtlsParameters: mediasoup.types.DtlsParameters;
     },
   ) {
-
     const { room, transportId, dtlsParameters } = data ?? {};
 
-     console.log(
+    console.log(
       'handleConnectSendTransport ================ Client: ',
       client.id,
       ' room: ',
-      room
+      room,
     );
     const theRoom = this.rooms.get(room);
     if (theRoom) {
@@ -195,6 +195,155 @@ export class SignalingGateway {
     }
     return false;
   }
+  @SubscribeMessage('connect-recvTransport')
+  async handleConnectRecvTransport(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      room: string;
+      transportId: string;
+      dtlsParameters: mediasoup.types.DtlsParameters;
+    },
+  ) {
+    const { room, transportId, dtlsParameters } = data;
+
+    const theRoom = this.rooms.get(room);
+    const peer = theRoom?.peers.get(client.id);
+    const transport = peer?.transports.get(transportId);
+
+    if (!transport) throw new Error('Transport not found');
+
+    await transport.connect({ dtlsParameters });
+
+    return true;
+  }
+
+  @SubscribeMessage('produce')
+  async handleProduce(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      room: string;
+      kind: mediasoup.types.MediaKind;
+      rtpParameters: mediasoup.types.RtpParameters;
+      transportId: string;
+    },
+  ) {
+    const { room, transportId, kind, rtpParameters } = data ?? {};
+
+    const theRoom = this.rooms.get(room);
+    if (!theRoom) throw new Error('Room does not exist');
+
+    const peer = theRoom.peers.get(client.id);
+    if (!peer) throw new Error('Peer doesnot exist');
+
+    const transport = peer.transports.get(transportId);
+    if (!transport) throw new Error('Transport doesnot exist');
+
+    const producer = await transport.produce({
+      kind,
+      rtpParameters,
+    });
+
+    peer.producers.set(producer.id, producer);
+
+    // now notify other clients of the room that a new producer added in the room
+    client.to(room).emit('new-producer', {
+      producerId: producer.id,
+      peerId: client.id,
+      kind: producer.kind,
+    });
+
+    // optional but Recomend
+    const producerDeletor = () => {
+      peer.producers.delete(producer.id);
+    };
+    producer.on('transportclose', producerDeletor);
+    producer.on('@close', producerDeletor);
+
+    return { id: producer.id };
+  }
+
+  @SubscribeMessage('consume')
+  async handleConsume(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      room: string;
+      producerId: string;
+      rtpCapabilities: mediasoup.types.RtpCapabilities;
+    },
+  ) {
+    const { room, producerId, rtpCapabilities } = data ?? {};
+
+    const theRoom = this.rooms.get(room);
+    if (!theRoom) throw new Error('Room doesnot exist');
+
+    const router = theRoom.router;
+    if (!router.canConsume({ producerId, rtpCapabilities })) {
+      throw new Error('Cannot consume this producers');
+    }
+
+    const peer = theRoom.peers.get(client.id);
+    if (!peer) throw new Error('Peer not found');
+
+    const transport = [...peer.transports.values()].find(
+      (t) => t.appData?.direction === 'RECV',
+    );
+    if (!transport) throw new Error('RECV transport not found');
+
+    const consumer = await transport.consume({
+      producerId,
+      rtpCapabilities,
+      paused: true,
+    });
+
+    peer.consumers.set(consumer.id, consumer);
+
+    // Cleanup
+    consumer.on('transportclose', () => {
+      peer.consumers.delete(consumer.id);
+    });
+
+    consumer.on('producerclose', () => {
+      peer.consumers.delete(consumer.id);
+      client.emit('producer-closed', {
+        producerId,
+      });
+    });
+
+    return {
+      id: consumer.id,
+      producerId,
+      kind: consumer.kind,
+      rtpParameters: consumer.rtpParameters,
+    };
+  }
+
+  @SubscribeMessage('resume-consumer')
+  async handleResumeConsumer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      room: string;
+      consumerId: string;
+    },
+  ) {
+    const { room, consumerId } = data;
+
+    const theRoom = this.rooms.get(room);
+    const peer = theRoom?.peers.get(client.id);
+    const consumer = peer?.consumers.get(consumerId);
+
+    if (!consumer) throw new Error('Consumer not found');
+
+    await consumer.resume();
+
+    return true;
+  }
+
+  ////////////////////////////////////////////////
+  ///////////////////////////////////////////////
 
   @SubscribeMessage('new-user')
   handleNewUser(
